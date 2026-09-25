@@ -3,6 +3,7 @@
 // Запуск:  go run .
 // Настройки через переменные окружения (у всех есть значения по умолчанию):
 //
+//	HOST        — адрес, на котором слушать (на сервере 127.0.0.1), по умолчанию все адреса
 //	PORT        — порт, по умолчанию 8080
 //	DB_PATH     — файл базы SQLite, по умолчанию data/kotiki.db
 //	UPLOAD_DIR  — куда сохранять файлы учеников, по умолчанию data/uploads
@@ -55,8 +56,8 @@ func main() {
 		UploadDir: env("UPLOAD_DIR", "data/uploads"),
 		StaticDir: env("STATIC_DIR", firstDir("../ХакатонLastVersion", "../Hackaton")),
 	}
-	addr := ":" + env("PORT", "8080")
-	log.Printf("Сервер запущен: http://localhost%s  (API: http://localhost%s/api/health, фронтенд: %s)", addr, addr, srv.StaticDir)
+	addr := env("HOST", "") + ":" + env("PORT", "8080")
+	log.Printf("Сервер запущен: http://localhost:%s  (API: /api/health, адрес: %s, фронтенд: %s)", env("PORT", "8080"), addr, srv.StaticDir)
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Routes(),

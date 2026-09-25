@@ -1,0 +1,61 @@
+# Шаблон systemd-юнита. deploy/remote-start.sh подставляет @APP_NAME@ и @APP_DIR@
+# и ставит результат в /etc/systemd/system/@APP_NAME@.service.
+[Unit]
+Description=@APP_NAME@: образовательная платформа (backend на Go)
+After=network.target
+
+[Service]
+Type=simple
+User=@APP_NAME@
+Group=@APP_NAME@
+# Фронтенд сервер берёт из ../ХакатонLastVersion (или ../Hackaton) относительно этого каталога.
+WorkingDirectory=@APP_DIR@/current/backend
+# Слушаем только localhost: снаружи сайт отдаёт nginx (deploy/web.sh).
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+# База и файлы учеников — в shared, чтобы переживать новые релизы.
+Environment=DB_PATH=@APP_DIR@/shared/data/kotiki.db
+Environment=UPLOAD_DIR=@APP_DIR@/shared/data/uploads
+# Решения учеников запускаются через обёртку с лимитами (deploy/sandbox/python3).
+Environment=PYTHON_BIN=@APP_DIR@/current/deploy/sandbox/python3
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-@APP_DIR@/shared/.env
+ExecStart=@APP_DIR@/current/backend/kotiki-server
+Restart=on-failure
+RestartSec=2
+
+# Изоляция. Сервис выполняет присланный учениками Python-код, поэтому:
+# отдельный пользователь без прав, файловая система только на чтение (кроме shared/data), без внешней сети,
+# лимиты памяти, процессов и CPU на весь сервис вместе с дочерними процессами.
+ReadWritePaths=@APP_DIR@/shared/data
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=768M
+TasksMax=128
+CPUQuota=200%
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

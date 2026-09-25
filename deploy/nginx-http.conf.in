@@ -1,0 +1,28 @@
+# @APP_NAME@: временный конфиг nginx, пока нет сертификата. Ставит deploy/web.sh.
+# Отдаёт проверку Let's Encrypt и проксирует сайт по HTTP.
+upstream @APP_NAME@_app {
+    server 127.0.0.1:@PORT@;
+    keepalive 16;
+}
+
+server {
+    listen 80 default_server;
+    server_name @DOMAINS@;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root @WEBROOT@;
+        default_type text/plain;
+    }
+
+    client_max_body_size 12m;  # скриншоты учеников — до 10 МБ (/api/uploads)
+
+    location / {
+        proxy_pass http://@APP_NAME@_app;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
