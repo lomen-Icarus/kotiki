@@ -1,4 +1,4 @@
-const DB_KEY='edu-platform-final-v4';
+const DB_KEY='edu-platform-final-v5';
 const seed={
   "courses": [
     {

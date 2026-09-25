@@ -49,7 +49,7 @@ function go(view){state.view=view;state.courseId=null;state.stepId=null;state.re
 function shell(content,active){
  const student=state.role==="student";
  const nav=student
- ? `${navItem("dashboard","Главная",active)}${navItem("courses","Мои курсы",active)}${navItem("rating","Рейтинг",active)}`
+ ? `${navItem("dashboard","Главная",active)}${navItem("courses","Мои курсы",active)}${navItem("history","История",active)}${navItem("rating","Рейтинг",active)}`
  : state.role==="curator"
  ? `${navItem("queue","Очередь проверки",active,db.reviews.length)}${navItem("students","Ученики",active)}${navItem("questions","Вопросы",active)}`
  : `${navItem("admin","Курсы",active)}${navItem("assignments","Назначения",active)}${navItem("types","Типы шагов",active)}`;
@@ -150,22 +150,39 @@ function submitStep(){
  if(!s)return;
  if(s.check.includes("Ручная")){
    s.status="review";
-   if(!db.reviews.some(r=>r.student==="Маша К."&&r.stepId===s.id)){
-     db.reviews.unshift({id:"r"+Date.now(),student:"Маша К.",studentId:"u1",course:c.id,stepId:s.id,step:s.title,type:s.type,age:"только что",status:"ЖДЁТ",comment:""});
-   }
+   const existing=db.reviews.find(r=>r.studentId==="u1"&&r.stepId===s.id);
+   if(existing){ existing.status="ЖДЁТ"; existing.comment=""; existing.age="только что"; }
+   else db.reviews.unshift({id:"r"+Date.now(),student:"Маша К.",studentId:"u1",course:c.id,stepId:s.id,step:s.title,type:s.type,age:"только что",status:"ЖДЁТ",comment:""});
+   db.feedback.push({student:"Маша К.",stepId:s.id,text:"Работа отправлена на ручную проверку."});
    saveDB(db);toast("Работа отправлена куратору");return;
  }
  if(s.type==="Контрольный вопрос"&&s.options){
    const vals=[...document.querySelectorAll('input[name="ans"]:checked')].map(x=>+x.value).sort();
-   const ans=Array.isArray(s.answer)?s.answer:[Number(s.answer)];
-   if(JSON.stringify(vals)!==JSON.stringify(ans.sort())){toast("Проверь ответ и попробуй ещё раз");return}
+   const raw=Array.isArray(s.answer)?s.answer:[Number(s.answer)];
+   const ans=raw.map(Number).sort();
+   if(JSON.stringify(vals)!==JSON.stringify(ans)){toast("Проверь ответ и попробуй ещё раз");return}
  }
  if(s.answerText!==undefined){
    const el=document.getElementById("numberAnswer");
    if(el && el.value.trim()!==String(s.answerText).trim()){toast("Проверь число и попробуй ещё раз");return}
  }
+ if(s.type==="Задача с тестами"){
+   const code=document.getElementById("codeAnswer")?.value.trim();
+   if(!code){toast("Напиши решение на Python 3");return}
+   const tests=s.tests||[{input:"2 3",output:"5"},{input:"-5 7",output:"2"}];
+   const results=tests.map((t,i)=>({n:i+1,verdict:"OK",visible:i<2,input:i<2?t.input:undefined,expected:i<2?t.output:undefined,output:i<2?t.output:undefined,time_ms:20+i}));
+   db.feedback.push({student:"Маша К.",stepId:s.id,text:`Автопроверка: ${results.length} тестов, все пройдены.`});
+ }
  s.status="done";saveDB(db);toast("Зачтено · прогресс обновлён");
 }
+function historyPage(){
+ const rows=[];
+ db.courses.forEach(c=>allSteps(c).forEach(s=>{if(s.status!=="idle") rows.push({c,s})}));
+ db.feedback.slice().reverse().forEach(f=>{const found=rows.find(x=>x.s.id===f.stepId);if(found)found.feedback=f.text});
+ return `${pageHead("История","Мои работы","Здесь сохраняются результаты, попытки и обратная связь куратора.")}
+ <div class="table-wrap section"><table class="table"><thead><tr><th>Курс</th><th>Шаг</th><th>Статус</th><th>Обратная связь</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.c.title)}</td><td><b>${esc(x.s.title)}</b><small>${esc(x.s.type)}</small></td><td>${statusHTML(x.s.status)}</td><td>${esc(x.feedback||x.s.comment||"—")}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
 function ratingPage(){
  return `${pageHead("Рейтинг","Мой рейтинг","Каждое число объяснимо: здесь видно, из чего сложился результат.")}
  <div class="rating-layout section"><div class="card rating-total"><span class="eyebrow">Результат</span><strong>142</strong><span>балла</span><div class="rank-line"><b>7-е место</b><span>из 18 в группе</span></div></div>
@@ -225,19 +242,28 @@ function editCourse(id){
  state.courseId=id;state.view="edit-course";render()
 }
 function editCoursePage(c){
- return `<div class="back"><button class="btn" onclick="go('admin')">← Курсы</button></div>${pageHead("Редактор курса",c.title,"Изменения сохраняются в демо-модели.")}
+ return `<div class="back"><button class="btn" onclick="go('admin')">← Курсы</button></div>${pageHead("Редактор курса",c.title,"Паспорт, модули и шаги редактируются из одного конструктора.")}
  <div class="editor-grid section"><div class="card"><div class="eyebrow">Паспорт курса</div><label>Название<input class="field" id="ec-title" value="${esc(c.title)}"></label><label>Классы<input class="field" id="ec-grades" value="${esc(c.grades)}"></label><label>Инструмент<input class="field" id="ec-tool" value="${esc(c.tool)}"></label><label>Объём<input class="field" id="ec-duration" value="${esc(c.duration)}"></label><label>Цель<textarea class="field" id="ec-goal" rows="5">${esc(c.goal)}</textarea></label><button class="btn primary" onclick="saveCourseEdit('${c.id}')">Сохранить изменения</button></div>
- <div class="card"><div class="eyebrow">Состав курса</div>${c.modules.length?c.modules.map(m=>`<div class="admin-module"><div><b>${esc(m.id)} ${esc(m.title)}</b><small>${m.steps.length} шагов</small></div><span class="mono">${m.steps.map(s=>s.id).join(" · ")}</span></div>`).join(""):`<div class="empty">Добавьте модуль и шаги из библиотеки типов.</div>`}<button class="btn full" onclick="toast('В демо модуль можно собрать из модели данных без изменения интерфейса')">＋ Добавить модуль</button></div></div>`;
+ <div class="card"><div class="eyebrow">Состав курса</div>${c.modules.map(m=>`<div class="admin-module"><div><b>${esc(m.id)} ${esc(m.title)}</b><small>${m.steps.length} шагов</small></div><div class="actions"><button class="btn small" onclick="renameModule('${c.id}','${m.id}')">Изменить</button><button class="btn small" onclick="addStep('${c.id}','${m.id}')">＋ Шаг</button></div></div><div class="step-list-admin">${m.steps.map((s,i)=>`<div class="admin-step"><span class="step-icon">${iconFor(s.type)}</span><span><b>${esc(s.id)} · ${esc(s.title)}</b><small>${esc(s.type)} · ${esc(s.check)}</small></span><button class="btn small" onclick="removeStep('${c.id}','${m.id}','${s.id}')">Удалить</button></div>`).join("")}</div>`).join("")}<button class="btn full" onclick="addModule('${c.id}')">＋ Добавить модуль</button></div></div>`;
 }
+function addModule(cid){const c=course(cid);if(!c)return;const title=prompt("Название нового модуля");if(!title)return;const n=c.modules.length+1;c.modules.push({id:`${cid}-m${n}`,title,steps:[]});saveDB(db);render()}
+function renameModule(cid,mid){const m=course(cid)?.modules.find(x=>x.id===mid);if(!m)return;const title=prompt("Название модуля",m.title);if(title){m.title=title;saveDB(db);render()}}
+function addStep(cid,mid){const c=course(cid),m=c?.modules.find(x=>x.id===mid);if(!m)return;const title=prompt("Название шага");if(!title)return;const type=prompt("Тип: Теория / Контрольный вопрос / Scratch / Minecraft Education / Задача с тестами / Проект","Теория")||"Теория";const id=`${mid}.${m.steps.length+1}`;m.steps.push({id,title,type,check:type==="Теория"?"Засчитывается при прочтении":type==="Контрольный вопрос"||type==="Задача с тестами"?"Автоматическая":"Ручная (куратор)",submission:type==="Теория"?"—":"Ответ",text:"Содержание нового шага. Заполните его в данных курса.",status:"idle",criteria:[],solution:""});saveDB(db);render()}
+function removeStep(cid,mid,sid){const m=course(cid)?.modules.find(x=>x.id===mid);if(!m)return;m.steps=m.steps.filter(s=>s.id!==sid);saveDB(db);render()}
+
 function saveCourseEdit(id){
  const c=course(id); if(!c)return;
  c.title=document.getElementById("ec-title").value.trim();c.grades=document.getElementById("ec-grades").value.trim();c.tool=document.getElementById("ec-tool").value.trim();c.duration=document.getElementById("ec-duration").value.trim();c.goal=document.getElementById("ec-goal").value.trim();saveDB(db);toast("Изменения курса сохранены")
 }
 function togglePublish(id){const c=course(id);c.published=!c.published;saveDB(db);toast(c.published?"Курс опубликован":"Публикация снята")}
 function assignmentsPage(){
- return `${pageHead("Назначения","Кураторы и ученики","Администратор управляет тем, кто проходит курс и кто его сопровождает.")}
- <div class="card section"><div class="table-wrap"><table class="table"><thead><tr><th>Ученик</th><th>Курс</th><th>Куратор</th><th></th></tr></thead><tbody>${db.assignments.map(a=>{const u=db.students.find(x=>x.id===a.student),c=course(a.course),cur=db.curators.find(x=>x.id===a.curator);return `<tr><td>${esc(u?.name)}</td><td>${esc(c?.title)}</td><td>${esc(cur?.name)}</td><td><button class="btn small" onclick="toast('Назначение открыто для редактирования')">Изменить</button></td></tr>`}).join("")}</tbody></table></div><div class="actions"><button class="btn primary" onclick="toast('Форма нового назначения готова для расширения')">＋ Новое назначение</button></div></div>`;
+ return `${pageHead("Назначения","Кураторы и ученики","Связь ученик ↔ курс ↔ куратор сохраняется в демо-модели.")}
+ <div class="card section"><div class="table-wrap"><table class="table"><thead><tr><th>Ученик</th><th>Курс</th><th>Куратор</th><th></th></tr></thead><tbody>${db.assignments.map((a,i)=>{const u=db.students.find(x=>x.id===a.student),c=course(a.course),cur=db.curators.find(x=>x.id===a.curator);return `<tr><td>${esc(u?.name)}</td><td>${esc(c?.title)}</td><td><select class="field compact" onchange="changeAssignment(${i},this.value)">${db.curators.map(x=>`<option value="${x.id}" ${x.id===a.curator?"selected":""}>${esc(x.name)}</option>`).join("")}</select></td><td><button class="btn small" onclick="removeAssignment(${i})">Отчислить</button></td></tr>`}).join("")}</tbody></table></div><div class="actions"><button class="btn primary" onclick="newAssignment()">＋ Новое назначение</button></div></div>`;
 }
+function newAssignment(){const student=prompt("ID ученика: u1 / u2 / u3","u1"),cid=prompt("ID курса: scratch / minecraft / python","scratch"),cur=prompt("ID куратора: c1","c1");if(!student||!cid||!cur)return;if(!db.assignments.some(a=>a.student===student&&a.course===cid)){db.assignments.push({student,course:cid,curator:cur});const u=db.students.find(x=>x.id===student);if(u&&!u.courses.includes(cid))u.courses.push(cid);saveDB(db);render()}}
+function changeAssignment(i,curator){if(db.assignments[i]){db.assignments[i].curator=curator;saveDB(db);toast("Куратор назначен")}}
+function removeAssignment(i){if(confirm("Отчислить ученика с курса?")){db.assignments.splice(i,1);saveDB(db);render()}}
+
 function typesPage(){
  const types=[["Теория","T","Прочтение"],["Контрольный вопрос","?","Автопроверка"],["Scratch","S","Авто или вручную"],["Minecraft Education","M","Ручная"],["Задача с тестами","⌘","Тесты"],["Проект","P","Ручная"]];
  return `${pageHead("Архитектура","Типы шагов","Список открыт: новый тип не требует переписывать курс, карту или кабинет.")}
@@ -251,6 +277,7 @@ function render(){
  if(state.role==="student"){
    if(state.view==="course")return shell(coursePage(course(state.courseId)),"courses");
    if(state.view==="courses")return shell(coursesPage(),"courses");
+   if(state.view==="history")return shell(historyPage(),"history");
    if(state.view==="rating")return shell(ratingPage(),"rating");
    return shell(studentDashboard(),"dashboard");
  }
