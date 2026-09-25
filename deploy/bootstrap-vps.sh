@@ -4,6 +4,8 @@
 # Запуск на сервере от root:
 #   bash bootstrap-vps.sh              # подготовить сервер и вывести 3 блока
 #   bash bootstrap-vps.sh --new-key    # выпустить новый ключ для GitHub (старый отзывается)
+#   bash bootstrap-vps.sh --pubkey 'ssh-ed25519 AAAA…'   # пустить уже существующий ключ GitHub
+#                                      # (переезд на новый сервер: VPS_SSH_KEY в GitHub не меняется)
 #   VPS_HOST=1.2.3.4 bash bootstrap-vps.sh   # если автоопределение IP ошиблось
 #
 # Что делает (повторный запуск безопасен):
@@ -20,10 +22,15 @@ KEY="$KEY_DIR/github_actions_ed25519"
 
 if [ "$(id -u)" -ne 0 ]; then echo "Запустите от root: sudo bash $0" >&2; exit 1; fi
 new_key=""
+ext_pub=""
 case "${1:-}" in
   --new-key) new_key=1 ;;
+  --pubkey)
+    ext_pub="$(printf '%s' "${2:-}" | tr -d '\r' | awk '{print $1" "$2" "$3}' | sed 's/ *$//')"
+    [[ "$ext_pub" =~ ^ssh-(ed25519|rsa)\ AAAA[A-Za-z0-9+/=]+ ]] || { echo "--pubkey: нужен публичный ключ вида 'ssh-ed25519 AAAA…'" >&2; exit 2; }
+    ;;
   "") ;;
-  *) sed -n '2,15p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,17p' "$0" >&2; exit 2 ;;
 esac
 
 log() { printf '\n\033[1m== %s\033[0m\n' "$*" >&2; }
@@ -35,8 +42,9 @@ if [ "${#need[@]}" -gt 0 ]; then
   log "Ставлю недостающее: ${need[*]}"
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq sudo openssh-client tar gzip curl util-linux >/dev/null
+    dpkg --configure -a || true   # долечить прерванную установку пакетов, если была
+    apt-get update
+    apt-get install -y -o Dpkg::Options::=--force-confold sudo openssh-client tar gzip curl util-linux
   elif command -v dnf >/dev/null; then
     dnf install -y -q sudo openssh-clients tar gzip curl util-linux
   elif command -v yum >/dev/null; then
@@ -67,19 +75,24 @@ if visudo -cf "$sudoers.tmp" >/dev/null; then mv -f "$sudoers.tmp" "$sudoers"; e
 # ---------- ключ для GitHub Actions ----------
 log "Ключ для GitHub Actions"
 install -d -m 700 "$KEY_DIR"
-if [ -n "$new_key" ] && [ -f "$KEY.pub" ]; then
+if [ -n "$ext_pub" ]; then
+  grep -qF "$(cut -d' ' -f1,2 <<<"$ext_pub")" "$home/.ssh/authorized_keys" || printf '%s\n' "$ext_pub" >> "$home/.ssh/authorized_keys"
+  echo "Добавлен существующий ключ GitHub: $(ssh-keygen -lf <(printf '%s\n' "$ext_pub") | awk '{print $2}')" >&2
+elif [ -n "$new_key" ] && [ -f "$KEY.pub" ]; then
   old="$(cut -d' ' -f1,2 "$KEY.pub")"
   grep -vF "$old" "$home/.ssh/authorized_keys" > "$home/.ssh/authorized_keys.tmp" || true
   cat "$home/.ssh/authorized_keys.tmp" > "$home/.ssh/authorized_keys"
   rm -f "$home/.ssh/authorized_keys.tmp" "$KEY" "$KEY.pub"
   echo "Старый ключ отозван" >&2
 fi
-if [ ! -f "$KEY" ]; then
-  ssh-keygen -q -t ed25519 -N '' -C "github-actions-vps-deploy@$(hostname)" -f "$KEY"
+if [ -z "$ext_pub" ]; then
+  if [ ! -f "$KEY" ]; then
+    ssh-keygen -q -t ed25519 -N '' -C "github-actions-vps-deploy@$(hostname)" -f "$KEY"
+  fi
+  chmod 600 "$KEY"
+  pub="$(cat "$KEY.pub")"
+  grep -qxF "$pub" "$home/.ssh/authorized_keys" || printf '%s\n' "$pub" >> "$home/.ssh/authorized_keys"
 fi
-chmod 600 "$KEY"
-pub="$(cat "$KEY.pub")"
-grep -qxF "$pub" "$home/.ssh/authorized_keys" || printf '%s\n' "$pub" >> "$home/.ssh/authorized_keys"
 
 # ---------- /opt/apps и vps-deploy ----------
 log "/opt/apps и /usr/local/bin/vps-deploy"
@@ -242,9 +255,13 @@ fi
 line() { printf '%*s\n' 72 '' | tr ' ' '='; }
 echo
 line
-echo "БЛОК 1 — секрет VPS_SSH_KEY (СЕКРЕТ: только в GitHub Secrets, никому не показывать)"
-line
-cat "$KEY"
+if [ -n "$ext_pub" ]; then
+  echo "БЛОК 1 — секрет VPS_SSH_KEY: НЕ МЕНЯТЬ (сервер пускает уже существующий ключ из GitHub)"
+else
+  echo "БЛОК 1 — секрет VPS_SSH_KEY (СЕКРЕТ: только в GitHub Secrets, никому не показывать)"
+  line
+  cat "$KEY"
+fi
 line
 echo "БЛОК 2 — секрет VPS_KNOWN_HOSTS"
 line
@@ -278,6 +295,11 @@ for w in "${warn[@]}"; do echo "  ! $w"; done
 line
 echo
 echo "Дальше: GitHub → репозиторий → Settings → Secrets and variables → Actions:"
-echo "  VPS_SSH_KEY     = блок 1 целиком (со строками BEGIN/END)"
+if [ -n "$ext_pub" ]; then
+  echo "  VPS_SSH_KEY     = не менять"
+else
+  echo "  VPS_SSH_KEY     = блок 1 целиком (со строками BEGIN/END)"
+fi
 echo "  VPS_KNOWN_HOSTS = блок 2"
-echo "Приватный ключ хранится в $KEY (только root). Отозвать/перевыпустить: bash $0 --new-key"
+echo "  переменная VPS_HOST = адрес этого сервера, если он не 45.95.202.69"
+[ -n "$ext_pub" ] || echo "Приватный ключ хранится в $KEY (только root). Отозвать/перевыпустить: bash $0 --new-key"
