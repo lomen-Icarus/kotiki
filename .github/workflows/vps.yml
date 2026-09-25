@@ -1,1 +1,226 @@
+# .github/workflows/vps.yml — деплой на VPS и управление им из GitHub Actions
+#
+# Секреты (Settings → Secrets and variables → Actions → Secrets) — их печатает bootstrap-vps.sh:
+#   VPS_SSH_KEY      приватный ключ для входа пользователем deploy
+#   VPS_KNOWN_HOSTS  публичные ключи сервера (защита от подмены)
+# Переменные (вкладка Variables, необязательно): VPS_HOST, VPS_PORT, VPS_USER, APP_NAME
+#
+# Автодеплой: push в ветку по умолчанию (main/master).
+# Вручную или из сессии Claude (workflow берётся из ветки по умолчанию, код — из ref):
+#   gh workflow run vps.yml --ref <ветка по умолчанию> -f action=deploy -f ref=<ветка> -f request_id=<метка>
+#   gh workflow run vps.yml --ref <ветка по умолчанию> -f action=exec -f command='uptime' -f request_id=<метка>
+# Хвост вывода публикуется аннотациями: gh run view <id> или GET /repos/{o}/{r}/check-runs/{job_id}/annotations
+name: VPS
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Действие"
+        type: choice
+        options: [deploy, exec, status, rollback]
+        default: deploy
+      ref:
+        description: "deploy: ветка, тег или SHA (пусто — ветка, на которой запущен workflow)"
+        type: string
+        default: ""
+      command:
+        description: "exec: команда на сервере (выполняется от пользователя deploy)"
+        type: string
+        default: ""
+      request_id:
+        description: "Метка, по которой можно найти этот запуск"
+        type: string
+        default: ""
+
+run-name: "${{ github.event_name == 'push' && format('deploy {0}', github.ref_name) || format('{0} {1} {2}', inputs.action, inputs.ref, inputs.request_id) }}"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: ${{ vars.VPS_HOST || '45.95.202.69' }}
+  VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+  VPS_USER: ${{ vars.VPS_USER || 'deploy' }}
+  APP_NAME: ${{ vars.APP_NAME || github.event.repository.name }}
+  ACTION: ${{ github.event_name == 'push' && 'deploy' || inputs.action }}
+
+jobs:
+  vps:
+    # push деплоит только ветку по умолчанию; ручной запуск работает всегда
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare
+        run: |
+          cat > "$RUNNER_TEMP/annotate.py" <<'PY'
+          import sys
+          level, title, path = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(path, encoding="utf-8", errors="replace") as f:
+              lines = f.read().splitlines()[-150:]
+          lines = [l if len(l) <= 300 else l[:300] + " …" for l in lines]
+          chunks, cur = [], ""
+          for l in lines:
+              if cur and len(cur) + len(l) + 1 > 3000:
+                  chunks.append(cur)
+                  cur = ""
+              cur += l + "\n"
+          if cur:
+              chunks.append(cur)
+          chunks = chunks[-6:]
+          def esc(s):
+              return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          def prop(s):
+              return esc(s).replace(":", "%3A").replace(",", "%2C")
+          for i, c in enumerate(chunks, 1):
+              t = title if len(chunks) == 1 else f"{title} ({i}/{len(chunks)})"
+              print(f"::{level} title={prop(t)}::{esc(c.rstrip())}")
+          PY
+          echo "Действие: ${ACTION}; приложение: ${APP_NAME}; сервер: ${VPS_USER}@${VPS_HOST}:${VPS_PORT}"
+
+      - name: Checkout
+        if: env.ACTION == 'deploy'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Build on runner (deploy/ci-build.sh, если есть)
+        if: env.ACTION == 'deploy'
+        run: |
+          if [ -f deploy/ci-build.sh ]; then
+            bash deploy/ci-build.sh
+          else
+            echo "deploy/ci-build.sh нет — сборка на раннере пропущена"
+          fi
+
+      - name: SSH setup
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$VPS_SSH_KEY" ] || [ -z "$VPS_KNOWN_HOSTS" ]; then
+            echo "::error title=Нет секретов::Добавьте секреты VPS_SSH_KEY и VPS_KNOWN_HOSTS (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/vps_known_hosts
+          if ! ssh-keygen -y -f ~/.ssh/vps_key < /dev/null > /dev/null; then
+            echo "::error title=Неверный ключ::VPS_SSH_KEY не похож на приватный ключ OpenSSH — вставьте блок целиком со строками BEGIN и END"
+            exit 1
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName ${VPS_HOST}
+            Port ${VPS_PORT}
+            User ${VPS_USER}
+            IdentityFile ~/.ssh/vps_key
+            IdentitiesOnly yes
+            UserKnownHostsFile ~/.ssh/vps_known_hosts
+            StrictHostKeyChecking yes
+            BatchMode yes
+            ConnectTimeout 20
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Check connection
+        run: |
+          ok=""
+          for i in 1 2 3; do
+            if timeout 60 ssh vps true; then ok=1; break; fi
+            echo "Попытка $i: SSH-подключения нет"
+            sleep $((i * 10))
+          done
+          if [ -z "$ok" ]; then
+            echo "::error title=Нет SSH::Раннер GitHub не подключился к ${VPS_USER}@${VPS_HOST} порт ${VPS_PORT}. Проверьте, что сервер включён, порт открыт и в sshd разрешён вход по ключу"
+            exit 1
+          fi
+          start=$(date +%s)
+          if ! bytes=$(head -c 1048576 /dev/urandom | timeout 90 ssh vps 'wc -c'); then
+            echo "::error title=Трафик обрывается::SSH подключается, но 1 МБ не прошёл за 90 с — похоже на фильтрацию трафика между GitHub и сервером"
+            exit 1
+          fi
+          echo "SSH ok: передано ${bytes} Б за $(( $(date +%s) - start )) с"
+
+      - name: Deploy
+        if: env.ACTION == 'deploy'
+        timeout-minutes: 25
+        run: |
+          out="$RUNNER_TEMP/out.txt"
+          rel="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short=8 HEAD)"
+          echo "Релиз ${rel} (коммит $(git rev-parse HEAD))" | tee "$out"
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          set +e
+          tar -czf - --exclude=.git . | ssh vps "vps-deploy deploy '${APP_NAME}' '${rel}'" 2>&1 | tee -a "$out"
+          rc=$?
+          set -e
+          echo "::${token}::"
+          exit "$rc"
+
+      - name: Exec
+        if: env.ACTION == 'exec'
+        timeout-minutes: 15
+        env:
+          CMD: ${{ inputs.command }}
+        run: |
+          if [ -z "$CMD" ]; then
+            echo "::error title=Нет команды::Для action=exec передайте -f command=..."
+            exit 1
+          fi
+          out="$RUNNER_TEMP/out.txt"
+          printf '$ %s\n' "$CMD" > "$out"
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          set +e
+          ssh vps "$CMD" 2>&1 | tee -a "$out"
+          rc=$?
+          set -e
+          echo "::${token}::"
+          echo "exit code: ${rc}" >> "$out"
+          exit "$rc"
+
+      - name: Status / rollback
+        if: env.ACTION == 'status' || env.ACTION == 'rollback'
+        run: |
+          out="$RUNNER_TEMP/out.txt"
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          set +e
+          ssh vps "vps-deploy ${ACTION} '${APP_NAME}'" 2>&1 | tee "$out"
+          rc=$?
+          set -e
+          echo "::${token}::"
+          exit "$rc"
+
+      - name: Report
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          out="$RUNNER_TEMP/out.txt"
+          if [ -s "$out" ]; then
+            {
+              echo "### ${ACTION}: ${JOB_STATUS}"
+              echo '```'
+              tail -n 300 "$out"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$JOB_STATUS" = "success" ]; then level=notice; else level=error; fi
+            python3 "$RUNNER_TEMP/annotate.py" "$level" "${ACTION} ${JOB_STATUS}" "$out"
+          fi
+          rm -f ~/.ssh/vps_key
 
