@@ -1,6 +1,6 @@
 # Бэкенд образовательной платформы (Go)
 
-Сервер на Go с базой SQLite. Отдаёт REST API (полное описание — [../API.md](../API.md)) и статические файлы фронтенда из папки `../Hackaton`.
+Сервер на Go с базой SQLite. Отдаёт REST API (полное описание — [../API.md](../API.md)) и статические файлы фронтенда из папки `../ХакатонLastVersion` (если её нет — `../Hackaton`).
 
 ## Запуск
 
@@ -22,7 +22,7 @@ go run .
 | `PORT` | `8080` | порт |
 | `DB_PATH` | `data/kotiki.db` | файл базы |
 | `UPLOAD_DIR` | `data/uploads` | куда сохраняются файлы учеников |
-| `STATIC_DIR` | `../Hackaton` | папка фронтенда |
+| `STATIC_DIR` | `../ХакатонLastVersion` или `../Hackaton` | папка фронтенда |
 | `PYTHON_BIN` | ищет `python3`, `python`, `py -3` | чем запускать решения |
 
 Демо-входы (пароль у всех `1234`): `admin`, `curator`, `curator2`, `masha` и ещё 7 учеников — см. API.md.

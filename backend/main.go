@@ -6,7 +6,8 @@
 //	PORT        — порт, по умолчанию 8080
 //	DB_PATH     — файл базы SQLite, по умолчанию data/kotiki.db
 //	UPLOAD_DIR  — куда сохранять файлы учеников, по умолчанию data/uploads
-//	STATIC_DIR  — папка фронтенда, которую сервер отдаёт по адресу /, по умолчанию ../Hackaton
+//	STATIC_DIR  — папка фронтенда, которую сервер отдаёт по адресу /,
+//	              по умолчанию ../ХакатонLastVersion, а если её нет — ../Hackaton
 //	PYTHON_BIN  — чем запускать решения на Python, по умолчанию ищется python3 / python / py -3
 package main
 
@@ -28,6 +29,16 @@ func env(key, def string) string {
 	return def
 }
 
+// firstDir — первая существующая папка из списка.
+func firstDir(dirs ...string) string {
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			return d
+		}
+	}
+	return dirs[len(dirs)-1]
+}
+
 func main() {
 	conn, err := db.Open(env("DB_PATH", "data/kotiki.db"))
 	if err != nil {
@@ -42,10 +53,10 @@ func main() {
 	srv := &api.Server{
 		DB:        conn,
 		UploadDir: env("UPLOAD_DIR", "data/uploads"),
-		StaticDir: env("STATIC_DIR", "../Hackaton"),
+		StaticDir: env("STATIC_DIR", firstDir("../ХакатонLastVersion", "../Hackaton")),
 	}
 	addr := ":" + env("PORT", "8080")
-	log.Printf("Сервер запущен: http://localhost%s  (API: http://localhost%s/api/health)", addr, addr)
+	log.Printf("Сервер запущен: http://localhost%s  (API: http://localhost%s/api/health, фронтенд: %s)", addr, addr, srv.StaticDir)
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Routes(),
