@@ -483,7 +483,7 @@ func (s *Server) myRating(w http.ResponseWriter, r *http.Request) error {
 		Max   int    `json:"max"`
 	}
 	byTypeList := []typeTotal{}
-	for _, t := range steps.Types {
+	for _, t := range steps.AllTypes() {
 		if v := byType[t.Name]; v != nil {
 			byTypeList = append(byTypeList, typeTotal{t.Name, t.Title, v[0], v[1]})
 		}

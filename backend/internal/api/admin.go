@@ -27,7 +27,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) error {
 		cond += " AND (name LIKE ? OR name LIKE ? OR login LIKE ?)"
 		args = append(args, "%"+q+"%", "%"+capitalize(q)+"%", "%"+q+"%")
 	}
-	rows, err := s.DB.Query(`SELECT id, name, login, role, last_seen_at FROM users WHERE `+cond+` ORDER BY role, name`, args...)
+	rows, err := s.DB.Query(`SELECT id, name, login, role, COALESCE(grade, ''), last_seen_at FROM users WHERE `+cond+` ORDER BY role, name`, args...)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) error {
 	for rows.Next() {
 		var it item
 		var seen sql.NullString
-		if err := rows.Scan(&it.ID, &it.Name, &it.Login, &it.Role, &seen); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.Login, &it.Role, &it.Grade, &seen); err != nil {
 			return err
 		}
 		it.LastSeenAt = nullStr(seen)
@@ -354,8 +354,26 @@ func (s *Server) adminPublish(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) adminUnpublish(w http.ResponseWriter, r *http.Request) error {
 	return s.setCourseStatus(w, r, "draft")
 }
+
+// DELETE /api/admin/courses/{id} — в архив; с ?hard=1 — удалить навсегда вместе
+// с модулями, шагами, сдачами, вопросами и назначениями.
 func (s *Server) adminArchiveCourse(w http.ResponseWriter, r *http.Request) error {
-	return s.setCourseStatus(w, r, "archived")
+	if r.URL.Query().Get("hard") != "1" {
+		return s.setCourseStatus(w, r, "archived")
+	}
+	id, err := pathID(r, "id")
+	if err != nil {
+		return err
+	}
+	res, err := s.DB.Exec(`DELETE FROM courses WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errNotFound("курс не найден")
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func (s *Server) touchCourse(courseID int64) {
@@ -501,6 +519,14 @@ func (s *Server) adminOrderModules(w http.ResponseWriter, r *http.Request) error
 // DefaultScore — баллы за шаг по умолчанию: чем сложнее шаг, тем больше.
 var DefaultScore = map[string]int{"theory": 1, "quiz": 2, "scratch": 3, "minecraft": 3, "code": 3, "project": 5}
 
+// defaultScore — баллы по умолчанию; для типов, добавленных администратором, — 2.
+func defaultScore(typ string) int {
+	if v, ok := DefaultScore[typ]; ok {
+		return v
+	}
+	return 2
+}
+
 // GET /api/admin/step-types — справочник для конструктора: типы шагов и поля способов проверки.
 func (s *Server) adminStepTypes(w http.ResponseWriter, r *http.Request) error {
 	type mode struct {
@@ -514,8 +540,8 @@ func (s *Server) adminStepTypes(w http.ResponseWriter, r *http.Request) error {
 		Modes        []mode `json:"modes"`
 	}
 	list := []item{}
-	for _, t := range steps.Types {
-		it := item{Type: t, DefaultScore: max(DefaultScore[t.Name], 1)}
+	for _, t := range steps.AllTypes() {
+		it := item{Type: t, DefaultScore: defaultScore(t.Name)}
 		for _, m := range t.CheckModes {
 			ch := steps.Checkers[m]
 			fields := ch.ConfigFields()
@@ -563,7 +589,7 @@ func (s *Server) adminCreateStep(w http.ResponseWriter, r *http.Request) error {
 	if err := steps.Validate(*in.Type, in.Content, in.Check); err != nil {
 		return errBadRequest(err.Error())
 	}
-	score := max(DefaultScore[*in.Type], 1)
+	score := defaultScore(*in.Type)
 	if in.MaxScore != nil {
 		score = max(*in.MaxScore, 0)
 	}

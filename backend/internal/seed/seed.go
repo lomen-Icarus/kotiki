@@ -104,27 +104,33 @@ func Run(conn *sql.DB) error {
 	}
 
 	// ---------- пользователи (синтетические) ----------
-	users := []struct{ login, password, name, role string }{
-		{"admin", "admin", "Администратор платформы", "admin"},
-		{"curator", "curator", "Анна Сергеевна Кузнецова", "curator"},
-		{"curator2", "curator2", "Павел Игоревич Смирнов", "curator"},
-		{"student", "student", "Маша Королёва", "student"},
-		{"liza", "student", "Лиза Орлова", "student"},
-		{"artem", "student", "Артём Волков", "student"},
-		{"sofia", "student", "София Белова", "student"},
-		{"timur", "student", "Тимур Гаранин", "student"},
-		{"ivan", "student", "Иван Петров", "student"},
-		{"nikita", "student", "Никита Зайцев", "student"},
-		{"vera", "student", "Вера Лебедева", "student"},
+	// Логины совпадают с подсказкой на экране входа фронтенда, пароль у всех 1234.
+	users := []struct{ login, name, role, grade string }{
+		{"admin", "Администратор платформы", "admin", ""},
+		{"curator", "Анна Сергеевна Кузнецова", "curator", ""},
+		{"curator2", "Павел Игоревич Смирнов", "curator", ""},
+		{"masha", "Маша Королёва", "student", "4 класс"},
+		{"liza", "Лиза Орлова", "student", "3 класс"},
+		{"artem", "Артём Волков", "student", "5 класс"},
+		{"sofia", "София Белова", "student", "4 класс"},
+		{"timur", "Тимур Гаранин", "student", "5 класс"},
+		{"ivan", "Иван Петров", "student", "7 класс"},
+		{"nikita", "Никита Зайцев", "student", "6 класс"},
+		{"vera", "Вера Лебедева", "student", "8 класс"},
 	}
+	const demoPassword = "1234"
 	uid := map[string]int64{}
 	for _, u := range users {
-		hash, err := api.HashPassword(u.password)
+		hash, err := api.HashPassword(demoPassword)
 		if err != nil {
 			return err
 		}
-		res, err := conn.Exec(`INSERT INTO users (name, login, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
-			u.name, u.login, hash, u.role, ts(24*30))
+		var grade any
+		if u.grade != "" {
+			grade = u.grade
+		}
+		res, err := conn.Exec(`INSERT INTO users (name, login, password_hash, role, grade, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			u.name, u.login, hash, u.role, grade, ts(24*30))
 		if err != nil {
 			return err
 		}
@@ -142,10 +148,10 @@ func Run(conn *sql.DB) error {
 		}
 		return nil
 	}
-	if err := enroll(scratch, "curator", "student", "liza", "artem", "sofia"); err != nil {
+	if err := enroll(scratch, "curator", "masha", "liza", "artem", "sofia"); err != nil {
 		return err
 	}
-	if err := enroll(minecraft, "curator", "student", "timur", "sofia"); err != nil {
+	if err := enroll(minecraft, "curator", "masha", "timur", "sofia"); err != nil {
 		return err
 	}
 	if err := enroll(python, "curator2", "ivan", "nikita", "vera", "artem"); err != nil {
@@ -207,18 +213,18 @@ func Run(conn *sql.DB) error {
 		answer, comment string
 	}
 	history := []s{
-		// Маша (демо-ученик): идёт в графике, одна работа на проверке в каждом курсе
-		{"student", scratch, 1, "passed", 120, "", ""},
-		{"student", scratch, 2, "passed", 119, `{"value":"b"}`, ""},
-		{"student", scratch, 3, "failed", 118, `{"value":"200"}`, ""},
-		{"student", scratch, 3, "passed", 117, `{"value":"0"}`, ""},
-		{"student", scratch, 4, "passed", 50, "", ""},
-		{"student", scratch, 5, "passed", 49, `{"value":"45"}`, ""},
-		{"student", scratch, 6, "returned", 30, link("https://scratch.mit.edu/projects/100000001"), "Угол 60° не замыкает фигуру. Подумай: на сколько градусов нужно повернуть, чтобы после трёх поворотов вернуться в исходное направление?"},
-		{"student", scratch, 6, "pending", 2, link("https://scratch.mit.edu/projects/100000002"), ""},
-		{"student", minecraft, 1, "passed", 26, "", ""},
-		{"student", minecraft, 2, "passed", 25, `{"value":"c"}`, ""},
-		{"student", minecraft, 3, "pending", 5, mc("https://makecode.com/_demo0001"), ""},
+		// Маша (демо-ученик masha): идёт в графике, одна работа на проверке в каждом курсе
+		{"masha", scratch, 1, "passed", 120, "", ""},
+		{"masha", scratch, 2, "passed", 119, `{"value":"b"}`, ""},
+		{"masha", scratch, 3, "failed", 118, `{"value":"200"}`, ""},
+		{"masha", scratch, 3, "passed", 117, `{"value":"0"}`, ""},
+		{"masha", scratch, 4, "passed", 50, "", ""},
+		{"masha", scratch, 5, "passed", 49, `{"value":"45"}`, ""},
+		{"masha", scratch, 6, "returned", 30, link("https://scratch.mit.edu/projects/100000001"), "Угол 60° не замыкает фигуру. Подумай: на сколько градусов нужно повернуть, чтобы после трёх поворотов вернуться в исходное направление?"},
+		{"masha", scratch, 6, "pending", 2, link("https://scratch.mit.edu/projects/100000002"), ""},
+		{"masha", minecraft, 1, "passed", 26, "", ""},
+		{"masha", minecraft, 2, "passed", 25, `{"value":"c"}`, ""},
+		{"masha", minecraft, 3, "pending", 5, mc("https://makecode.com/_demo0001"), ""},
 
 		// Лиза: застряла на вопросе — 3 неудачные попытки подряд (ранний сигнал)
 		{"liza", scratch, 1, "passed", 72, "", ""},
@@ -296,7 +302,7 @@ func Run(conn *sql.DB) error {
 		text, answer string
 		hoursAgo     float64
 	}{
-		{"student", scratch, 7, "Почему нужно именно 120 повторов, а не 60?", "", 3},
+		{"masha", scratch, 7, "Почему нужно именно 120 повторов, а не 60?", "", 3},
 		{"ivan", python, 8, "Не понимаю условие про 100 лет: 2000 делится на 100, но он високосный?", "", 5},
 		{"liza", scratch, 5, "Я считаю 10 + 5 = 15, почему неправильно?", "", 26},
 		{"sofia", scratch, 3, "Почему x получается 0, а не 200?", "Мяч стартует с −200 и проходит 10 × 20 = 200 шагов вправо: −200 + 200 = 0.", 24 * 6},

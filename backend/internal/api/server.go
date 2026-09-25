@@ -26,17 +26,20 @@ type Server struct {
 
 // Routes регистрирует все маршруты. Синтаксис "GET /api/x/{id}" появился в Go 1.22.
 func (s *Server) Routes() http.Handler {
+	steps.CustomTypes = s.customTypes // типы шагов, добавленные администратором, берутся из базы
+
 	mux := http.NewServeMux()
 	any := []string{"student", "curator", "admin"}
 	staff := []string{"curator", "admin"}
 	admin := []string{"admin"}
 
 	mux.HandleFunc("GET /api/health", s.h(func(w http.ResponseWriter, r *http.Request) error {
-		return writeJSON(w, 200, map[string]string{"status": "ok"})
+		return writeJSON(w, 200, map[string]string{"status": "ok", "backend": "kotiki-go"})
 	}))
 
 	// Авторизация
 	mux.HandleFunc("POST /api/auth/login", s.h(s.login))
+	mux.HandleFunc("POST /api/auth/register", s.h(s.register))
 	mux.HandleFunc("GET /api/auth/me", s.auth(any, s.me))
 	mux.HandleFunc("POST /api/auth/logout", s.auth(any, s.logout))
 
@@ -44,6 +47,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/catalog", s.h(s.catalog))
 	mux.HandleFunc("GET /api/catalog/filters", s.h(s.catalogFilters))
 	mux.HandleFunc("GET /api/courses/{id}", s.h(s.coursePage))
+	mux.HandleFunc("GET /api/step-types", s.h(s.adminStepTypes)) // справочник типов: названия, иконки, поля
 
 	// Ученик
 	mux.HandleFunc("GET /api/me/courses", s.auth(any, s.myCourses))
@@ -86,6 +90,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/admin/courses/{id}/modules/order", s.auth(admin, s.adminOrderModules))
 	// шаги
 	mux.HandleFunc("GET /api/admin/step-types", s.auth(admin, s.adminStepTypes))
+	mux.HandleFunc("POST /api/admin/step-types", s.auth(admin, s.adminCreateStepType))
+	mux.HandleFunc("DELETE /api/admin/step-types/{type}", s.auth(admin, s.adminDeleteStepType))
 	mux.HandleFunc("POST /api/admin/modules/{id}/steps", s.auth(admin, s.adminCreateStep))
 	mux.HandleFunc("GET /api/admin/steps/{id}", s.auth(admin, s.adminStep))
 	mux.HandleFunc("PATCH /api/admin/steps/{id}", s.auth(admin, s.adminUpdateStep))
@@ -166,6 +172,7 @@ type User struct {
 	Name  string `json:"name"`
 	Login string `json:"login"`
 	Role  string `json:"role"`
+	Grade string `json:"grade,omitempty"`
 }
 
 type ctxKey struct{}
@@ -204,8 +211,8 @@ func (s *Server) userFromToken(r *http.Request) (User, error) {
 	}
 	var u User
 	err := s.DB.QueryRow(`
-		SELECT u.id, u.name, u.login, u.role FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.token = ? AND s.expires_at > ?`, token, db.Now()).Scan(&u.ID, &u.Name, &u.Login, &u.Role)
+		SELECT u.id, u.name, u.login, u.role, COALESCE(u.grade, '') FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE s.token = ? AND s.expires_at > ?`, token, db.Now()).Scan(&u.ID, &u.Name, &u.Login, &u.Role, &u.Grade)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, errUnauthorized("токен недействителен или истёк — войдите заново")
 	}

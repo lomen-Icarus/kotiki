@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
     login         TEXT    NOT NULL UNIQUE,
     password_hash TEXT    NOT NULL,
     role          TEXT    NOT NULL CHECK (role IN ('student', 'curator', 'admin')),
+    grade         TEXT,                        -- класс ученика, например «4 класс»
     created_at    TEXT    NOT NULL,
     last_seen_at  TEXT
 );
@@ -96,6 +97,18 @@ CREATE TABLE IF NOT EXISTS questions (
     answered_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at  TEXT    NOT NULL,
     answered_at TEXT
+);
+
+-- Типы шагов, которые администратор добавил сам, без изменения кода.
+-- Встроенные типы (theory, quiz, ...) описаны в internal/steps/types.go.
+CREATE TABLE IF NOT EXISTS step_types (
+    name           TEXT PRIMARY KEY,           -- латиницей, например video
+    title          TEXT NOT NULL,
+    icon           TEXT NOT NULL DEFAULT '•',
+    description    TEXT NOT NULL DEFAULT '',
+    check_modes    TEXT NOT NULL DEFAULT '["manual"]', -- JSON-список способов проверки
+    content_fields TEXT NOT NULL DEFAULT '[]',         -- JSON-список полей содержания
+    created_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS uploads (

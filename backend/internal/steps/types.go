@@ -9,7 +9,9 @@
 //     answer (сверка ответа), tests (прогон кода по тестам), manual (куратор).
 //
 // Чтобы добавить новый тип шага, достаточно одной записи в Types ниже — база данных,
-// API и фронтенд не меняются. Новый способ проверки — это новая реализация Checker.
+// API и фронтенд не меняются. Администратор может добавить тип и вообще без кода:
+// POST /api/admin/step-types (такие типы хранятся в таблице step_types).
+// Новый способ проверки — это новая реализация Checker.
 package steps
 
 import (
@@ -39,15 +41,18 @@ type Option struct {
 type Type struct {
 	Name          string   `json:"type"`
 	Title         string   `json:"title"`
+	Icon          string   `json:"icon"`
 	Description   string   `json:"description"`
 	CheckModes    []string `json:"check_modes"`
 	ContentFields []Field  `json:"content_fields"`
+	Custom        bool     `json:"custom"` // добавлен администратором через API, а не в коде
 }
 
 // Types — реестр типов шагов. Порядок важен только для отображения в конструкторе.
 var Types = []Type{
 	{
 		Name:        "theory",
+		Icon:        "T",
 		Title:       "Теория",
 		Description: "Текст с примерами. Засчитывается при прочтении.",
 		CheckModes:  []string{"none"},
@@ -57,6 +62,7 @@ var Types = []Type{
 	},
 	{
 		Name:        "quiz",
+		Icon:        "?",
 		Title:       "Контрольный вопрос",
 		Description: "Один верный вариант, несколько верных или короткий ответ числом.",
 		CheckModes:  []string{"answer"},
@@ -68,6 +74,7 @@ var Types = []Type{
 	},
 	{
 		Name:        "scratch",
+		Icon:        "S",
 		Title:       "Scratch",
 		Description: "Разбор блочной программы: ответ числом (автоматически) или изменённый проект по ссылке (куратор).",
 		CheckModes:  []string{"answer", "manual"},
@@ -79,6 +86,7 @@ var Types = []Type{
 	},
 	{
 		Name:        "minecraft",
+		Icon:        "M",
 		Title:       "Minecraft Education",
 		Description: "Задание внутри мира Minecraft, программа из блоков MakeCode. Проверяет куратор.",
 		CheckModes:  []string{"manual"},
@@ -92,6 +100,7 @@ var Types = []Type{
 	},
 	{
 		Name:        "code",
+		Icon:        "⌘",
 		Title:       "Задача с тестами",
 		Description: "Код на Python прогоняется по набору тестов.",
 		CheckModes:  []string{"tests"},
@@ -105,6 +114,7 @@ var Types = []Type{
 	},
 	{
 		Name:        "project",
+		Icon:        "P",
 		Title:       "Проект",
 		Description: "Самостоятельная работа по критериям, проверяет куратор.",
 		CheckModes:  []string{"manual"},
@@ -116,9 +126,22 @@ var Types = []Type{
 	},
 }
 
+// CustomTypes возвращает типы, которые администратор добавил через API (хранятся в базе).
+// Функцию подставляет пакет api при старте сервера.
+var CustomTypes func() []Type
+
+// AllTypes — встроенные типы и типы, добавленные администратором.
+func AllTypes() []Type {
+	all := append([]Type{}, Types...)
+	if CustomTypes != nil {
+		all = append(all, CustomTypes()...)
+	}
+	return all
+}
+
 // FindType ищет тип по имени.
 func FindType(name string) (Type, bool) {
-	for _, t := range Types {
+	for _, t := range AllTypes() {
 		if t.Name == name {
 			return t, true
 		}
