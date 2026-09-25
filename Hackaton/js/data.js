@@ -1,4 +1,4 @@
-const DB_KEY='edu-platform-final-v5';
+const DB_KEY='edu-platform-final-v6';
 const seed={
   "courses": [
     {
@@ -181,7 +181,7 @@ const seed={
       "id": "minecraft",
       "title": "Minecraft Education: программируем агента",
       "grades": "3–6 класс",
-      "duration": "6–8 занятий по 45 минут",
+      "duration": "6 занятий по 40 минут",
       "tool": "Minecraft Education; Code Builder / MakeCode",
       "goal": "Ученик собирает программы из блоков MakeCode и управляет агентом в мире Minecraft.",
       "published": true,
@@ -518,8 +518,15 @@ const seed={
   "user": {
     "name": "Маша К.",
     "grade": "4 класс",
-    "role": null
+    "role": null,
+    "accountId": null
   },
+  "accounts": [
+    {"id":"a-student","login":"masha","password":"1234","role":"student","studentId":"u1"},
+    {"id":"a-curator","login":"curator","password":"1234","role":"curator"},
+    {"id":"a-admin","login":"admin","password":"1234","role":"admin"}
+  ],
+  "stepTypes": [],
   "students": [
     {
       "id": "u1",
@@ -590,7 +597,7 @@ const seed={
       "id": "r1",
       "student": "Иван П.",
       "studentId": "u2",
-      "course": "python",
+      "course": "minecraft",
       "stepId": "2.3.1",
       "step": "Проект: мост через реку",
       "type": "Проект",
@@ -623,7 +630,10 @@ const seed={
       "comment": ""
     }
   ],
-  "feedback": []
+  "feedback": [],
+  "questions": [
+    {"id":"q1","studentId":"u1","student":"Маша К.","course":"scratch","stepId":"1.2.4","step":"Разбор: кот по кругу","text":"Почему нужно 120 повторов, а не 60?","answer":"Потому что полный круг — 360°, а каждый поворот 3°. 360 ÷ 3 = 120.","createdAt":"сегодня, 09:42","answeredAt":"сегодня, 10:01"}
+  ]
 };
 function clone(x){return JSON.parse(JSON.stringify(x))}
 function loadDB(){const raw=localStorage.getItem(DB_KEY);if(!raw){localStorage.setItem(DB_KEY,JSON.stringify(seed));return clone(seed)}return JSON.parse(raw)}
