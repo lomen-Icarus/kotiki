@@ -1,8 +1,0 @@
-{
-  "name": "educational-platform-demo",
-  "version": "5.0.0",
-  "private": true,
-  "description": "API-ready demo stand for the educational platform hackathon case",
-  "scripts": {"start":"node server.js"},
-  "engines": {"node": ">=18"}
-}
